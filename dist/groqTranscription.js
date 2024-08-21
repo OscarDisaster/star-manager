@@ -44,14 +44,16 @@ const promises_1 = require("fs/promises");
 const fluent_ffmpeg_1 = __importDefault(require("fluent-ffmpeg")); // Import ffmpeg
 const axios_1 = __importDefault(require("axios")); // Import axios
 const dotenv = __importStar(require("dotenv"));
+const path_1 = __importDefault(require("path"));
 // Load environment variables from .env file
 dotenv.config();
 // Initialize Groq client
 const groq = new groq_sdk_1.default({ apiKey: process.env.GROQ_API_KEY });
 // Define the path to the local ffmpeg binary
-const ffmpegPath = './bin/ffmpeg'; // Path to ffmpeg in the root bin directory
+const ffmpegPath = process.env.FFMPEG_PATH || "./bin/ffmpeg"; // Path to ffmpeg in the root bin directory
+const absoluteFfmpegPath = path_1.default.resolve(ffmpegPath);
 // Set the path to the ffmpeg binary
-fluent_ffmpeg_1.default.setFfmpegPath(ffmpegPath);
+fluent_ffmpeg_1.default.setFfmpegPath(absoluteFfmpegPath);
 function transcribeAudio(mp3FilePath_1) {
     return __awaiter(this, arguments, void 0, function* (mp3FilePath, language = "es") {
         const mp3Stream = (0, fs_1.createReadStream)(mp3FilePath);
@@ -60,7 +62,7 @@ function transcribeAudio(mp3FilePath_1) {
                 file: mp3Stream,
                 model: "whisper-large-v3",
                 response_format: "json",
-                language: language // Use the language parameter
+                language: language, // Use the language parameter
             });
             console.log(transcription);
             const transcriptionText = transcription.text || "No se pudo transcribir el audio.";
@@ -78,19 +80,19 @@ function transcribeAudio(mp3FilePath_1) {
 function processVoiceMessage(fileUrl_1) {
     return __awaiter(this, arguments, void 0, function* (fileUrl, language = "es") {
         try {
-            const response = yield axios_1.default.get(fileUrl, { responseType: 'arraybuffer' });
+            const response = yield axios_1.default.get(fileUrl, { responseType: "arraybuffer" });
             const audioBuffer = response.data;
             // Save the ogg file temporarily
-            const oggFilePath = 'temp.ogg';
+            const oggFilePath = "temp.ogg";
             yield (0, promises_1.writeFile)(oggFilePath, audioBuffer);
             // Convert ogg to mp3 using fluent-ffmpeg
-            const mp3FilePath = 'temp.mp3';
+            const mp3FilePath = "temp.mp3";
             yield new Promise((resolve, reject) => {
                 (0, fluent_ffmpeg_1.default)(oggFilePath)
-                    .toFormat('mp3')
+                    .toFormat("mp3")
                     .save(mp3FilePath)
-                    .on('end', resolve)
-                    .on('error', reject);
+                    .on("end", resolve)
+                    .on("error", reject);
             });
             const transcriptionText = yield transcribeAudio(mp3FilePath, language);
             // Clean up temporary files
@@ -102,33 +104,50 @@ function processVoiceMessage(fileUrl_1) {
         }
     });
 }
-function convertTranscriptionToStarRequest(transcriptionText, telegramID) {
+function convertTranscriptionToStarRequest(transcriptionText, telegramId, isAdmin) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b;
         try {
-            const chatCompletion = yield groq.chat.completions.create({
+            const promptFile = isAdmin ? "adminPrompt.txt" : "userPrompt.txt";
+            const promptPath = path_1.default.join(__dirname, "prompts", promptFile);
+            let prompt = (0, fs_1.readFileSync)(promptPath, "utf-8");
+            prompt = prompt.replace("{transcription}", transcriptionText);
+            const completion = yield groq.chat.completions.create({
                 messages: [
                     {
                         role: "system",
-                        content: "Eres un asistente que convierte transcripciones de audio en solicitudes de estrellas. Extrae el número de estrellas y el motivo del texto transcrito. Responde solo con un objeto JSON que contenga 'numEstrellas' (número) y 'motivo' (string)."
+                        content: "Eres un asistente que convierte transcripciones de audio en solicitudes de estrellas. Extrae SOLO la información explícitamente mencionada. Responde con un objeto JSON que puede contener 'numEstrellas' (número), 'motivo' (string) y 'targetUser' (string, solo para solicitudes de administrador). NO incluyas campos que no estén explícitamente mencionados en la transcripción. NO uses valores por defecto como 'No especificado'.",
                     },
                     {
                         role: "user",
-                        content: `Convierte esta transcripción en una solicitud de estrellas: "${transcriptionText}"`
-                    }
+                        content: prompt,
+                    },
                 ],
                 model: "mixtral-8x7b-32768",
-                temperature: 0.5,
+                temperature: 0.2,
                 max_tokens: 1024,
-                response_format: { type: "json_object" }
+                response_format: { type: "json_object" },
             });
-            const result = JSON.parse(((_b = (_a = chatCompletion.choices[0]) === null || _a === void 0 ? void 0 : _a.message) === null || _b === void 0 ? void 0 : _b.content) || "{}");
-            return {
-                numEstrellas: result.numEstrellas || 0,
-                motivo: result.motivo || "",
-                telegramID: telegramID,
-                status: 'pending'
+            const result = JSON.parse(((_b = (_a = completion.choices[0]) === null || _a === void 0 ? void 0 : _a.message) === null || _b === void 0 ? void 0 : _b.content) || "{}");
+            // Filtrar campos no especificados y hacer type assertion
+            const filteredResult = Object.fromEntries(Object.entries(result).filter(([_, value]) => value !== "No especificado" && value !== ""));
+            // Verificar que los campos requeridos estén presentes
+            if (!filteredResult.numEstrellas && !isAdmin) {
+                throw new Error("El número de estrellas es obligatorio para solicitudes de usuarios.");
+            }
+            if (isAdmin &&
+                (!filteredResult.numEstrellas || !filteredResult.motivo || !filteredResult.targetUser)) {
+                throw new Error("El número de estrellas, el motivo y el usuario objetivo son obligatorios para solicitudes de administradores.");
+            }
+            // Crear el objeto StarRequest con los tipos correctos
+            const starRequest = {
+                numEstrellas: filteredResult.numEstrellas || 0,
+                motivo: filteredResult.motivo || "",
+                telegramID: telegramId,
+                status: "pending",
+                targetUser: filteredResult.targetUser,
             };
+            return starRequest;
         }
         catch (error) {
             throw new Error(`Error convirtiendo la transcripción a StarRequest: ${error.message}`);

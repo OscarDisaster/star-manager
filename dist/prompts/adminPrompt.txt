@@ -1,0 +1,1 @@
+Extrae la siguiente información de la transcripción: número de estrellas, motivo y nombre del usuario objetivo. Incluye SOLO los campos que se mencionan explícitamente en la transcripción. Transcripción: "{transcription}"

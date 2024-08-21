@@ -5,6 +5,6 @@ const grammy_1 = require("grammy");
 function getApprovalKeyboard() {
     return new grammy_1.InlineKeyboard()
         .text("Aprobar", "action_approve")
-        .text("Cancelar", "action_cancel")
-        .text("Rechazar", "action_reject");
+        .text("Rechazar", "action_reject")
+        .text("Cancelar", "action_cancel");
 }

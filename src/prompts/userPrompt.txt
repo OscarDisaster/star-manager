@@ -1,0 +1,1 @@
+Extrae la siguiente información de la transcripción: número de estrellas y motivo. Incluye SOLO los campos que se mencionan explícitamente en la transcripción. Transcripción: "{transcription}"

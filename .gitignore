@@ -2,3 +2,5 @@
 *.env
 node_modules/
 bin/
+# Ignore .js files in src folder
+src/**/*.js
